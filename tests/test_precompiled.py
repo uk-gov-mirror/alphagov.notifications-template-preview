@@ -1,6 +1,7 @@
 import base64
 import io
 import logging
+import uuid
 from io import BytesIO
 from unittest.mock import ANY, MagicMock, call
 
@@ -15,10 +16,14 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
 from app.precompiled import (
+    A4_WIDTH,
+    NOTIFY_TAG_BOUNDING_BOX,
     NotifyCanvas,
+    _no_intersect_with_notify_tag_bbox,
     _warn_if_filesize_has_grown,
     add_address_to_precompiled_letter,
     add_notify_tag_to_letter,
+    check_notify_tag_area_for_encroachment,
     extract_address_block,
     get_invalid_pages_with_message,
     is_notify_tag_present,
@@ -933,3 +938,257 @@ def test_warn_if_filesize_has_grown(client, caplog, orig_filesize, new_filesize,
         assert len(caplog.records) == 1
         assert caplog.records[0].levelno == expected_lvl
         assert caplog.records[0].message == expected_msg
+
+
+@pytest.mark.parametrize(
+    "bbox, expected_result",
+    [
+        # Inside Notify tag area
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 + 0.5,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 0.5,
+                NOTIFY_TAG_BOUNDING_BOX.x1 - 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+            ),
+            False,
+        ),
+        # Touches the boundary to the right - No intersect with Notify tag area
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x1,
+                NOTIFY_TAG_BOUNDING_BOX.y1,
+                (A4_WIDTH * mm) - 2,
+                NOTIFY_TAG_BOUNDING_BOX.y1,
+            ),
+            True,
+        ),
+        # overlapping Notify tag area to the right
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x1 - 5,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.x1 + 10,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+            ),
+            False,
+        ),
+        # Completely to the right of Notify tag area
+        (
+            (
+                A4_WIDTH * mm - 10,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 1,
+                A4_WIDTH * mm - 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+            ),
+            True,
+        ),
+        # Touches the bottom boundary - No intersect with Notify tag area
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0,
+                NOTIFY_TAG_BOUNDING_BOX.y1,
+                NOTIFY_TAG_BOUNDING_BOX.x1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 + 10,
+            ),
+            True,
+        ),
+        # Completely below the bottom boundaries
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0,
+                NOTIFY_TAG_BOUNDING_BOX.y1 + 1,
+                A4_WIDTH * mm - 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 + 10,
+            ),
+            True,
+        ),
+        # Overlaps bottom boundary
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+                A4_WIDTH * mm - 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 + 10,
+            ),
+            False,
+        ),
+        # Touches left boundary but doesn't intersect with Notify tag area
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 - 10,
+                NOTIFY_TAG_BOUNDING_BOX.y1 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.x0,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+            ),
+            True,
+        ),
+        # Completely to the left - defensive test,
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 - 10,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.x0 - 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+            ),
+            True,
+        ),
+        # Overlaps to the left - defensive test
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 - 10,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.x0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+            ),
+            False,
+        ),
+        # touches boundary above Notify tag area - defensive test,
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 - 10,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 1,
+                A4_WIDTH * mm - 1,
+                NOTIFY_TAG_BOUNDING_BOX.y0,
+            ),
+            True,
+        ),
+        # Completely above Notify tag area - defensive test
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.y0 - 10,
+                NOTIFY_TAG_BOUNDING_BOX.x1,
+                NOTIFY_TAG_BOUNDING_BOX.y0 - 1,
+            ),
+            True,
+        ),
+        # Overlaps the top of Notify tag - defensive test
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.y0 - 10,
+                NOTIFY_TAG_BOUNDING_BOX.x1 + 10,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 1,
+            ),
+            False,
+        ),
+    ],
+)
+def test__no_intersect_with_notify_tag_bbox(bbox, expected_result):
+    """
+    The test cases focus on the main boundaries, x0,y0 and y1 in sets of touching, overlapping and completely beyond
+    those boundary tests.
+    """
+    assert _no_intersect_with_notify_tag_bbox(bbox) is expected_result
+
+
+encroachment_characters_to_test = [
+    # The tuples here contain the inserted text and what will be extracted by PyMuPDF
+    "misplaced text",  # rendered as invisible/hidden for the test
+    " Notify",
+    "Notify ",
+    "SomethingsomethingNotify",
+    # --- Standard Whitespace & Formatting (Supported in WinAnsi) ---
+    " ",  # standard space
+    "\t",  # tab character
+    "\ntext",  # newline character
+    "\r\ntext",  # carriage return newline
+    "\u00a0",  # non-breaking space, (PyMuPDF maps to " ")
+    "\u00ad",  # soft hyphen (PyMuPDF maps to '-')
+    # --- Unsupported Unicode Control Characters (PyMuPDF converts to '·') ---
+    "\u200b",  # zero width space
+    "\u200c",  # zero width non-joiner
+    "\u200d",  # zero width joiner
+    "\ufeff",  # byte order mark
+    "\u2060",  # word joiner
+    "\u200e",  # left-to-right mark
+    "\u200f",  # right-to-left mark
+    "\u3164",  # hangul filler
+    "\u2800",  # braille pattern blank
+    "\u3000",  # ideographic space
+]
+
+
+@pytest.mark.parametrize("encroaching_character", encroachment_characters_to_test)
+def test_check_notify_tag_area_for_encroachment(encroaching_character):
+    # create new document from the test blank_with_address pdf and load into memory
+    test_encroachment_file = pymupdf.open(stream=already_has_notify_tag, filetype="PDF")
+    page = test_encroachment_file[0]
+    # insert an invisible character into the usual Notify tag area
+
+    page.insert_text(
+        (NOTIFY_TAG_BOUNDING_BOX.x0 + 5, NOTIFY_TAG_BOUNDING_BOX.y0 + 10),
+        encroaching_character,
+        fontsize=10,
+        fontname="helv",
+        render_mode=3,  # makes the text "invisible" ie hidden
+    )
+
+    test_encroachment_file_data = BytesIO(test_encroachment_file.tobytes())
+    test_encroachment_file.close()
+
+    # The various coordinates being tested mean sometimes just part of the encroaching text is returned
+    # PyMuPDF also returns different renderings of non text characters.
+    # It is more straight forward to test that an encroachment is triggered
+    assert check_notify_tag_area_for_encroachment(test_encroachment_file_data) is not None
+
+
+@pytest.mark.parametrize(
+    "valid_pdf_file",
+    [
+        valid_letter,
+        blank_with_address,
+        already_has_notify_tag,
+        notify_tag_on_first_page,
+        address_with_multiple_unusual_coordinates,
+        address_with_large_space_in_a_line,
+        content_up_to_boundary_edges,
+        portrait_rotated_page,
+        landscape_oriented_page,
+    ],
+)
+def test_check_notify_tag_area_for_encroachment_returns_no_encroachment_for_valid_pdf_files(valid_pdf_file):
+    valid_pdf_file_data = BytesIO(valid_pdf_file)
+    assert check_notify_tag_area_for_encroachment(valid_pdf_file_data) is None
+
+
+@pytest.mark.parametrize(
+    "encroaching_character, expected_logged_result",
+    [
+        ("John Doe", "J"),  # handling of capture of PII data
+        (" ", " "),
+        ("  ", " "),
+        ("\t", "\\t"),
+    ],
+)
+def test_sanitise_precompiled_letter_with_invisible_characters_encroaching_on_notify_tag_area_logging(
+    client, auth_header, caplog, encroaching_character, expected_logged_result
+):
+    filename = str(uuid.uuid4())
+    query_string = "?upload_id=" + filename
+    test_encroachment_file = pymupdf.open(stream=already_has_notify_tag, filetype="PDF")
+    page = test_encroachment_file[0]
+
+    # insert an invisible character into the usual Notify tag area
+    page.insert_text(
+        (NOTIFY_TAG_BOUNDING_BOX.x0 + 5, NOTIFY_TAG_BOUNDING_BOX.y0 + 10),
+        encroaching_character,
+        fontsize=10,
+        fontname="helv",
+        render_mode=3,  # makes the text "invisible" ie hidden
+    )
+
+    test_encroachment_file_data = BytesIO(test_encroachment_file.tobytes())
+    test_encroachment_file.close()
+
+    response = client.post(
+        url_for("precompiled_blueprint.sanitise_precompiled_letter") + query_string,
+        data=test_encroachment_file_data,
+        headers={"Content-type": "application/json", **auth_header},
+    )
+    assert response.status_code == 200
+    message = (
+        f"precompiled pdf:({filename}) has character:('{expected_logged_result}'), encroaching on the Notify tag area."
+    )
+    assert message in caplog.messages
