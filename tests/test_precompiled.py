@@ -22,6 +22,7 @@ from app.precompiled import (
     _warn_if_filesize_has_grown,
     add_address_to_precompiled_letter,
     add_notify_tag_to_letter,
+    check_notify_tag_area_for_encroachment,
     extract_address_block,
     get_invalid_pages_with_message,
     is_notify_tag_present,
@@ -1079,3 +1080,73 @@ def test__no_intersect_with_notify_tag_bbox(bbox, expected_result):
     those boundary tests.
     """
     assert _no_intersect_with_notify_tag_bbox(bbox) is expected_result
+
+
+encroachment_characters_to_test = [
+    # The tuples here contain the inserted text and what will be extracted by PyMuPDF
+    "misplaced text",  # rendered as invisible/hidden for the test
+    " Notify",
+    "Notify ",
+    "SomethingsomethingNotify",
+    # --- Standard Whitespace & Formatting (Supported in WinAnsi) ---
+    " ",  # standard space
+    "\t",  # tab character
+    "\n"  # newline character
+    "\u00a0",  # non-breaking space, (PyMuPDF maps to " ")
+    "\u00ad",  # soft hyphen (PyMuPDF maps to '-')
+    # --- Unsupported Unicode Control Characters (PyMuPDF converts to '·') ---
+    "\u200b",  # zero width space
+    "\u200c",  # zero width non-joiner
+    "\u200d",  # zero width joiner
+    "\ufeff",  # byte order mark
+    "\u2060",  # word joiner
+    "\u200e",  # left-to-right mark
+    "\u200f",  # right-to-left mark
+    "\u3164",  # hangul filler
+    "\u2800",  # braille pattern blank
+    "\u3000",  # ideographic space
+]
+
+
+@pytest.mark.parametrize("encroaching_character", encroachment_characters_to_test)
+def test_check_notify_tag_area_for_encroachment(encroaching_character):
+    # create new document from the test blank_with_address pdf and load into memory
+    test_encroachment_file = pymupdf.open(stream=already_has_notify_tag, filetype="PDF")
+    page = test_encroachment_file[0]
+    # insert an invisible character into the usual Notify tag area
+
+    page.insert_text(
+        (NOTIFY_TAG_BOUNDING_BOX.x0 + 5, NOTIFY_TAG_BOUNDING_BOX.y0 + 10),
+        encroaching_character,
+        fontsize=10,
+        fontname="helv",
+        render_mode=3,  # makes the text "invisible" ie hidden
+    )
+
+    test_encroachment_file_data = BytesIO(test_encroachment_file.tobytes())
+    test_encroachment_file.close()
+
+    # The various coordinates being tested mean sometimes just part of the encroaching text is returned
+    # PyMuPDF also returns different renderings of non text characters.
+    # It is more straight forward to test that an encroachment is triggered
+    assert check_notify_tag_area_for_encroachment(test_encroachment_file_data) is not None
+
+
+@pytest.mark.parametrize(
+    "valid_pdf_file",
+    [
+        valid_letter,
+        blank_with_address,
+        already_has_notify_tag,
+        notify_tag_on_first_page,
+        address_with_multiple_unusual_coordinates,
+        address_with_multiple_unusual_coordinates,
+        address_with_large_space_in_a_line,
+        content_up_to_boundary_edges,
+        portrait_rotated_page,
+        landscape_oriented_page,
+    ],
+)
+def test_check_notify_tag_area_for_encroachment_returns_no_encroachment_for_valid_pdf_files(valid_pdf_file):
+    valid_pdf_file_data = BytesIO(valid_pdf_file)
+    assert check_notify_tag_area_for_encroachment(valid_pdf_file_data) is None

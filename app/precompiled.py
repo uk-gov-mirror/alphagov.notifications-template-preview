@@ -463,6 +463,61 @@ def _no_intersect_with_notify_tag_bbox(bbox):
     )
 
 
+def check_notify_tag_area_for_encroachment(file_data: BytesIO) -> None | str:
+    """
+    This checks that no invisible/hidden are encroaching on the NOTIFY tag area
+    It returns the first detected encroachment, if any exists as an optimisation decision.
+    The primary aim of this check is to prevent precompiled letters with encroachments in the Notify tag area from being
+    sent to DVLA where they will be rejected.
+    """
+    file_data.seek(0)
+    doc = pymupdf.open("pdf", file_data)
+    page = doc[0]
+
+    # Extract bounding boxes in the top half of the PDF page.
+    # The coverage could be expanded if needed. The underlying mupdf engine(although extremely efficient as it is a C
+    # extension) discards partially overlapping bboxes which aren't completely in the provided target clip area.
+    # The strategy is to start conservatively and expand the scanned area if needed.
+    target_bounding_box = pymupdf.Rect(
+        0,  # x0
+        0,  # y0
+        A4_WIDTH * mm,  # x1
+        (A4_HEIGHT * mm) / 2,  # y1
+    )
+
+    data = page.get_text("dict", clip=target_bounding_box)
+    file_data.seek(0)
+
+    # To mitigate the performance hit of sorting in Python, hierarchical scalar bounding box checks are run across
+    # every structural level of the PDF, ie  to filter out unsuitable bounding boxes.
+    # PDF page layout is hierarchical with a tree structure,block -> line -> span, so every span will only be visited
+    # once and the only comparison is to the NOTIFY_TAG_BOUNDING_BOX (and the area to it's right along the width of the
+    # page), so even though the algorithm is a 3 level nested loop, the worst case scenario will be O(n).
+
+    for block in data.get("blocks", []):
+        if _no_intersect_with_notify_tag_bbox(block["bbox"]):
+            continue
+
+        for line in block.get("lines", []):
+            if _no_intersect_with_notify_tag_bbox(line["bbox"]):
+                continue
+
+            for span in line.get("spans", []):
+                if _no_intersect_with_notify_tag_bbox(span["bbox"]):
+                    continue
+
+                text = span["text"]
+
+                # Account for the fact that the text "NOTIFY" is in the notify_tag bounding box
+                if text == NOTIFY_TAG_TEXT:
+                    continue
+                # Any other text or trailing ghost spaces will trigger an encroachment
+                if text:
+                    return text
+
+    return None
+
+
 def add_notify_tag_to_letter(src_pdf):
     """
     Adds the word 'NOTIFY' to the first page of the PDF
