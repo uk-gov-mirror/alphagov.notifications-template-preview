@@ -1092,7 +1092,8 @@ encroachment_characters_to_test = [
     # --- Standard Whitespace & Formatting (Supported in WinAnsi) ---
     " ",  # standard space
     "\t",  # tab character
-    "\n"  # newline character
+    "\ntext",  # newline character
+    "\r\ntext",  # carriage return newline
     "\u00a0",  # non-breaking space, (PyMuPDF maps to " ")
     "\u00ad",  # soft hyphen (PyMuPDF maps to '-')
     # --- Unsupported Unicode Control Characters (PyMuPDF converts to '·') ---
@@ -1140,7 +1141,6 @@ def test_check_notify_tag_area_for_encroachment(encroaching_character):
         blank_with_address,
         already_has_notify_tag,
         notify_tag_on_first_page,
-        address_with_multiple_unusual_coordinates,
         address_with_multiple_unusual_coordinates,
         address_with_large_space_in_a_line,
         content_up_to_boundary_edges,

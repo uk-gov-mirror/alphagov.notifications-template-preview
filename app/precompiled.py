@@ -261,20 +261,20 @@ def sanitise_file_contents(encoded_string, *, allow_international_letters, filen
                 filename=filename,
             )
 
-        # Check if there are encroaching invisible/hidden characters on the Notify tag area and log the event.
-        # The strategy is to simply log incidents of invisible/hidden text/characters encroaching on the Notify tag
-        # area for now in order to monitor and fine tune the algorithm.
-        # The first character of the encroaching text will be logged to avoid PII issues and to aid the evaluation of
-        # the checks, ie "text" would be logged as "t" and "   " as " ".
-        encroaching_text = check_notify_tag_area_for_encroachment(file_data)
-        if encroaching_text:
-            encroaching_character = repr(encroaching_text[0])  # handles displaying invisible characters in the logs
-            current_app.logger.warning(
-                "precompiled pdf:(%s) has character:(%s), encroaching on the Notify tag area.",
-                filename,
-                encroaching_character,
-                extra={"file_name": filename, "encroaching_character": encroaching_character},
-            )
+            # Check if there are encroaching invisible/hidden characters on the Notify tag area and log the event.
+            # The strategy is to simply log incidents of invisible/hidden text/characters encroaching on the Notify tag
+            # area for now in order to monitor and fine tune the algorithm.
+            # The first character of the encroaching text will be logged to avoid PII issues and to aid the evaluation
+            # of the checks, ie "text" would be logged as "t" and "   " as " ".
+            encroaching_text = check_notify_tag_area_for_encroachment(file_data)
+            if encroaching_text:
+                encroaching_character = repr(encroaching_text[0])  # handles displaying invisible characters in the logs
+                current_app.logger.warning(
+                    "precompiled pdf:(%s) has character:(%s), encroaching on the Notify tag area.",
+                    filename,
+                    encroaching_character,
+                    extra={"file_name": filename, "encroaching_character": encroaching_character},
+                )
 
         raw_file = file_data.read()
 
