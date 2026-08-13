@@ -15,7 +15,10 @@ from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
 
 from app.precompiled import (
+    A4_WIDTH,
+    NOTIFY_TAG_BOUNDING_BOX,
     NotifyCanvas,
+    _no_intersect_with_notify_tag_bbox,
     _warn_if_filesize_has_grown,
     add_address_to_precompiled_letter,
     add_notify_tag_to_letter,
@@ -933,3 +936,146 @@ def test_warn_if_filesize_has_grown(client, caplog, orig_filesize, new_filesize,
         assert len(caplog.records) == 1
         assert caplog.records[0].levelno == expected_lvl
         assert caplog.records[0].message == expected_msg
+
+
+@pytest.mark.parametrize(
+    "bbox, expected_result",
+    [
+        # Inside Notify tag area
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 + 0.5,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 0.5,
+                NOTIFY_TAG_BOUNDING_BOX.x1 - 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+            ),
+            False,
+        ),
+        # Touches the boundary to the right - No intersect with Notify tag area
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x1,
+                NOTIFY_TAG_BOUNDING_BOX.y1,
+                (A4_WIDTH * mm) - 2,
+                NOTIFY_TAG_BOUNDING_BOX.y1,
+            ),
+            True,
+        ),
+        # overlapping Notify tag area to the right
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x1 - 5,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.x1 + 10,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+            ),
+            False,
+        ),
+        # Completely to the right of Notify tag area
+        (
+            (
+                A4_WIDTH * mm - 10,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 1,
+                A4_WIDTH * mm - 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+            ),
+            True,
+        ),
+        # Touches the bottom boundary - No intersect with Notify tag area
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0,
+                NOTIFY_TAG_BOUNDING_BOX.y1,
+                NOTIFY_TAG_BOUNDING_BOX.x1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 + 10,
+            ),
+            True,
+        ),
+        # Completely below the bottom boundaries
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0,
+                NOTIFY_TAG_BOUNDING_BOX.y1 + 1,
+                A4_WIDTH * mm - 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 + 10,
+            ),
+            True,
+        ),
+        # Overlaps bottom boundary
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+                A4_WIDTH * mm - 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 + 10,
+            ),
+            False,
+        ),
+        # Touches left boundary but doesn't intersect with Notify tag area
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 - 10,
+                NOTIFY_TAG_BOUNDING_BOX.y1 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.x0,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+            ),
+            True,
+        ),
+        # Completely to the left - defensive test,
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 - 10,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.x0 - 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+            ),
+            True,
+        ),
+        # Overlaps to the left - defensive test
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 - 10,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.x0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.y1 - 1,
+            ),
+            False,
+        ),
+        # touches boundary above Notify tag area - defensive test,
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 - 10,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 1,
+                A4_WIDTH * mm - 1,
+                NOTIFY_TAG_BOUNDING_BOX.y0,
+            ),
+            True,
+        ),
+        # Completely above Notify tag area - defensive test
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.y0 - 10,
+                NOTIFY_TAG_BOUNDING_BOX.x1,
+                NOTIFY_TAG_BOUNDING_BOX.y0 - 1,
+            ),
+            True,
+        ),
+        # Overlaps the top of Notify tag - defensive test
+        (
+            (
+                NOTIFY_TAG_BOUNDING_BOX.x0 + 1,
+                NOTIFY_TAG_BOUNDING_BOX.y0 - 10,
+                NOTIFY_TAG_BOUNDING_BOX.x1 + 10,
+                NOTIFY_TAG_BOUNDING_BOX.y0 + 1,
+            ),
+            False,
+        ),
+    ],
+)
+def test__no_intersect_with_notify_tag_bbox(bbox, expected_result):
+    """
+    The test cases focus on the main boundaries, x0,y0 and y1 in sets of touching, overlapping and completely beyond
+    those boundary tests.
+    """
+    assert _no_intersect_with_notify_tag_bbox(bbox) is expected_result
