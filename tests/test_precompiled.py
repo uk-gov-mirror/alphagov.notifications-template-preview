@@ -1,6 +1,7 @@
 import base64
 import io
 import logging
+import uuid
 from io import BytesIO
 from unittest.mock import ANY, MagicMock, call
 
@@ -1150,3 +1151,44 @@ def test_check_notify_tag_area_for_encroachment(encroaching_character):
 def test_check_notify_tag_area_for_encroachment_returns_no_encroachment_for_valid_pdf_files(valid_pdf_file):
     valid_pdf_file_data = BytesIO(valid_pdf_file)
     assert check_notify_tag_area_for_encroachment(valid_pdf_file_data) is None
+
+
+@pytest.mark.parametrize(
+    "encroaching_character, expected_logged_result",
+    [
+        ("John Doe", "J"),  # handling of capture of PII data
+        (" ", " "),
+        ("  ", " "),
+        ("\t", "\\t"),
+    ],
+)
+def test_sanitise_precompiled_letter_with_invisible_characters_encroaching_on_notify_tag_area_logging(
+    client, auth_header, caplog, encroaching_character, expected_logged_result
+):
+    filename = str(uuid.uuid4())
+    query_string = "?upload_id=" + filename
+    test_encroachment_file = pymupdf.open(stream=already_has_notify_tag, filetype="PDF")
+    page = test_encroachment_file[0]
+
+    # insert an invisible character into the usual Notify tag area
+    page.insert_text(
+        (NOTIFY_TAG_BOUNDING_BOX.x0 + 5, NOTIFY_TAG_BOUNDING_BOX.y0 + 10),
+        encroaching_character,
+        fontsize=10,
+        fontname="helv",
+        render_mode=3,  # makes the text "invisible" ie hidden
+    )
+
+    test_encroachment_file_data = BytesIO(test_encroachment_file.tobytes())
+    test_encroachment_file.close()
+
+    response = client.post(
+        url_for("precompiled_blueprint.sanitise_precompiled_letter") + query_string,
+        data=test_encroachment_file_data,
+        headers={"Content-type": "application/json", **auth_header},
+    )
+    assert response.status_code == 200
+    message = (
+        f"precompiled pdf:({filename}) has character:('{expected_logged_result}'), encroaching on the Notify tag area."
+    )
+    assert message in caplog.messages
