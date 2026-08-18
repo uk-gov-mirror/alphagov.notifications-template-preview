@@ -83,7 +83,7 @@ def test_preview_rejects_if_not_authenticated(client, filetype, headers):
         {"Authorization": "Token my-secret-key2"},
     ],
 )
-def test_preview_accepts_either_api_key(client, view_letter_template_request_data, headers):
+def test_preview_accepts_either_api_key(client, mock_weasyprint_logos, view_letter_template_request_data, headers):
     resp = client.post(
         url_for("preview_blueprint.view_letter_template_pdf", filetype="pdf"),
         data=json.dumps(view_letter_template_request_data),
@@ -92,14 +92,14 @@ def test_preview_accepts_either_api_key(client, view_letter_template_request_dat
     assert resp.status_code == 200
 
 
-def test_return_headers_match_filetype_for_pdf(view_letter_template_pdf):
+def test_return_headers_match_filetype_for_pdf(view_letter_template_pdf, mock_weasyprint_logos):
     resp = view_letter_template_pdf()
 
     assert resp.status_code == 200
     assert resp.headers["Content-Type"] == "application/pdf"
 
 
-def test_return_headers_match_filetype_for_png(view_letter_template_png):
+def test_return_headers_match_filetype_for_png(view_letter_template_png, mock_weasyprint_logos):
     resp = view_letter_template_png()
 
     assert resp.status_code == 200
@@ -111,6 +111,7 @@ def test_get_pdf_caches_with_correct_keys(
     app,
     mocker,
     view_letter_template_pdf,
+    mock_weasyprint_logos,
     mocked_cache_get,
     mocked_cache_set,
 ):
@@ -134,10 +135,11 @@ def test_get_png_caches_with_correct_keys(
     app,
     mocker,
     view_letter_template_png,
+    mock_weasyprint_logos,
     mocked_cache_get,
     mocked_cache_set,
 ):
-    expected_cache_key = "pngs/78406ae4c518a7a8893de063845e96b62ae491fc.png"
+    expected_cache_key = "pngs/710a1c17de7a0b08adaad212a6fde8e5b05f5682.png"
     resp = view_letter_template_png()
 
     assert resp.status_code == 200
@@ -190,6 +192,7 @@ def test_view_letter_template_png_hits_cache_correct_number_of_times(
     app,
     mocker,
     view_letter_template_png,
+    mock_weasyprint_logos,
     mocked_cache_get,
     mocked_cache_set,
     cache_get_returns,
@@ -252,6 +255,7 @@ def test_view_letter_template_png_hits_cache_correct_number_of_times_for_a_bilin
     mocker,
     view_letter_template_png,
     view_letter_template_request_data_bilingual,
+    mock_weasyprint_logos,
     mocked_cache_get,
     mocked_cache_set,
     cache_get_returns,
@@ -371,6 +375,7 @@ def test_view_letter_template_fails_with_page_arg(
 def test_view_letter_template_png_route_gets_png_for_page(
     client,
     auth_header,
+    mock_weasyprint_logos,
     sentence_count,
     page_number,
     expected_response_code,
@@ -405,6 +410,7 @@ def test_view_letter_template_png_route_gets_png_for_page(
 def test_view_letter_template_for_letter_attachment(
     client,
     auth_header,
+    mock_weasyprint_logos,
     mocked_cache_get,
     mocker,
 ):
@@ -512,7 +518,7 @@ def test_view_letter_attachment_preview_when_requested_page_out_of_range(
 
 @pytest.mark.parametrize("letter_attachment, requested_page", [(None, 2), ({"page_count": 1, "id": "1234"}, 3)])
 def test_view_letter_template_png_when_requested_page_out_of_range(
-    client, auth_header, mocker, mocked_cache_get, letter_attachment, requested_page
+    client, auth_header, mock_weasyprint_logos, mocker, mocked_cache_get, letter_attachment, requested_page
 ):
     mocker.patch("app.preview.hide_notify_tag")
     mocker.patch(
@@ -628,7 +634,9 @@ def test_blank_fields_okay_for_view_letter_template_pdf(
     assert mock_template.called is True
 
 
-def test_date_can_be_passed_for_view_letter_template_pdf(view_letter_template_pdf, view_letter_template_request_data):
+def test_date_can_be_passed_for_view_letter_template_pdf(
+    mock_weasyprint_logos, view_letter_template_pdf, view_letter_template_request_data
+):
     view_letter_template_request_data["date"] = "2012-12-12T00:00:00"
 
     with patch("app.preview.HTML", wraps=HTML) as mock_html:
@@ -649,7 +657,14 @@ def test_date_can_be_passed_for_view_letter_template_pdf(view_letter_template_pd
     ],
 )
 def test_POST_page_count(
-    client, auth_header, sentence_count, welsh_subject, welsh_content, letter_attachment, expected_pages
+    client,
+    mock_weasyprint_logos,
+    auth_header,
+    sentence_count,
+    welsh_subject,
+    welsh_content,
+    letter_attachment,
+    expected_pages,
 ):
     response = client.post(
         url_for("preview_blueprint.page_count"),
